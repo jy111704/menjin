@@ -48,6 +48,7 @@ jobs:
     name: Deploy
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,6 +82,7 @@ jobs:
             "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH' | Out-Null\""
 
       - name: Upload jar and deploy script
+        timeout-minutes: 8
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
@@ -88,9 +90,9 @@ jobs:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" campus-vehicle.jar \
+          scp -O -i ~/.ssh/deploy_key -P "$SSH_PORT" campus-vehicle.jar \
             "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/campus-vehicle.jar.new"
-          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" deploy/windows-deploy.ps1 \
+          scp -O -i ~/.ssh/deploy_key -P "$SSH_PORT" deploy/windows-deploy.ps1 \
             "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/windows-deploy.ps1"
 
       - name: Restart and health check
