@@ -1,0 +1,28 @@
+# 依赖与缓存
+node_modules/
+**/node_modules/
+
+# 构建产物（可由脚本重新生成）
+backend/target/
+backend/src/main/resources/static/
+desktop/app-dist/
+desktop/release/
+desktop/dist-win/
+desktop/dist-win2/
+desktop/dist-win3/
+desktop/dist-dbg/
+desktop/.build-tmp/
+desktop/build-debug.log
+
+# 桌面客户端二进制（需要时运行 打包桌面客户端.bat 重新生成）
+桌面客户端/*.exe
+
+# 本地数据、日志与 IDE 配置
+.workbuddy/
+logs/
+*.log
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

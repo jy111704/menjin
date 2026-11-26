@@ -1,0 +1,57 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: campus-vehicle
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/campus_vehicle?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+    username: root
+    password: "123456"
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 3
+      connection-timeout: 10000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      encoding: UTF-8
+      continue-on-error: false
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: always
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+campus:
+  jwt:
+    secret: "campus-vehicle-access-control-2026-secret-key-please-change-in-production"
+    expire-hours: 12
+  qr:
+    secret: "campus-pass-qrcode-signature-key-2026"
+  admin:
+    username: admin
+    password: "Admin@123"
+    real-name: 系统管理员
+    phone: "13800000000"
+
+logging:
+  level:
+    root: info
+    com.campus.vehicle: debug
+  file:
+    name: logs/campus-vehicle.log
