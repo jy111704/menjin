@@ -1,6 +1,6 @@
 param(
     [string]$AppDir = "C:\campus-vehicle",
-    [int]$Port = 80888,
+    [int]$Port = 8088,
     [string]$ReleaseTag = ""
 )
 
@@ -15,6 +15,33 @@ $startPs1 = [System.IO.Path]::GetFullPath((Join-Path $AppDir "start-campus.ps1")
 
 function Write-Log([string]$Message) {
     Write-Output ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)
+}
+
+function Invoke-Schtasks([string[]]$Arguments) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & schtasks.exe @Arguments 2>&1 | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+function Assert-JarFile([string]$Path, [long]$ExpectedSize, [string]$ExpectedHash) {
+    if (-not (Test-Path $Path)) {
+        throw "file not found: $Path"
+    }
+    $actualSize = (Get-Item $Path).Length
+    if ($ExpectedSize -gt 0 -and $actualSize -ne $ExpectedSize) {
+        throw "size mismatch: $actualSize / $ExpectedSize"
+    }
+    if ($ExpectedHash) {
+        $actualHash = (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $ExpectedHash) {
+            throw "sha256 mismatch"
+        }
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
@@ -34,15 +61,58 @@ if ($ReleaseTag) {
         throw "release asset campus-vehicle.jar not found in $ReleaseTag"
     }
 
-    Write-Log "downloading $($asset.name) ($($asset.size) bytes)"
-    $downloadHeaders = @{
-        "User-Agent" = "campus-vehicle-deploy"
-        "Accept"     = "application/octet-stream"
+    $expectedSize = [long]$asset.size
+    $expectedHash = ""
+    if ($asset.digest -and $asset.digest.StartsWith("sha256:")) {
+        $expectedHash = $asset.digest.Substring(7).ToLower()
     }
-    Invoke-WebRequest -UseBasicParsing `
-        -Uri "https://api.github.com/repos/$repo/releases/assets/$($asset.id)" `
-        -Headers $downloadHeaders -OutFile $newJar -TimeoutSec 900
-    Write-Log "downloaded to $newJar"
+
+    # The server is in China; direct GitHub downloads are very slow. Try a
+    # public GitHub proxy first, then fall back to the API asset endpoint.
+    $proxyUrls = @(
+        "https://gh-proxy.com/$($asset.browser_download_url)",
+        "https://ghfast.top/$($asset.browser_download_url)"
+    )
+    $downloaded = $false
+    foreach ($url in $proxyUrls) {
+        try {
+            if (Test-Path $newJar) {
+                Remove-Item $newJar -Force -ErrorAction SilentlyContinue
+            }
+            Write-Log "downloading $($asset.name) via $url"
+            & curl.exe -L --fail --retry 2 --connect-timeout 15 --max-time 600 -sS -o $newJar $url
+            if ($LASTEXITCODE -ne 0) {
+                throw "curl exit code $LASTEXITCODE"
+            }
+            Assert-JarFile -Path $newJar -ExpectedSize $expectedSize -ExpectedHash $expectedHash
+            $downloaded = $true
+            Write-Log "downloaded and verified $newJar"
+            break
+        } catch {
+            Write-Log "download failed: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $downloaded) {
+        Write-Log "proxy download failed, falling back to GitHub API asset"
+        $downloadHeaders = @{
+            "User-Agent" = "campus-vehicle-deploy"
+            "Accept"     = "application/octet-stream"
+        }
+        if (Test-Path $newJar) {
+            Remove-Item $newJar -Force -ErrorAction SilentlyContinue
+        }
+        Invoke-WebRequest -UseBasicParsing `
+            -Uri "https://api.github.com/repos/$repo/releases/assets/$($asset.id)" `
+            -Headers $downloadHeaders -OutFile $newJar -TimeoutSec 600
+        Assert-JarFile -Path $newJar -ExpectedSize $expectedSize -ExpectedHash $expectedHash
+        $downloaded = $true
+        Write-Log "downloaded and verified $newJar"
+    }
+
+    if (-not $downloaded) {
+        throw "release download failed"
+    }
 }
 
 if (-not (Test-Path $newJar)) {
@@ -64,7 +134,7 @@ if (Test-Path $envFile) {
 }
 
 # Stop the scheduled task and any running campus-vehicle Java process.
-& schtasks.exe /End /TN $taskName 2>$null | Out-Null
+$null = Invoke-Schtasks @("/End", "/TN", $taskName)
 Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -and $_.CommandLine -like "*campus-vehicle.jar*" } |
     ForEach-Object {
@@ -122,19 +192,15 @@ try {
 
 # Prefer a scheduled task so the backend survives SSH disconnect and reboot.
 $taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $startPs1"
-$taskOk = $false
-try {
-    & schtasks.exe /Create /TN $taskName /TR $taskCommand /SC ONSTART /RU SYSTEM /RL HIGHEST /F 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        $taskOk = $true
-    }
-} catch {
-    Write-Log "scheduled task creation failed: $($_.Exception.Message)"
+$createCode = Invoke-Schtasks @("/Create", "/TN", $taskName, "/TR", $taskCommand, "/SC", "ONSTART", "/RU", "SYSTEM", "/RL", "HIGHEST", "/F")
+$taskOk = ($createCode -eq 0)
+if (-not $taskOk) {
+    Write-Log "scheduled task creation failed with exit code $createCode"
 }
 
 if ($taskOk) {
     Write-Log "starting via scheduled task $taskName"
-    & schtasks.exe /Run /TN $taskName 2>&1 | Out-Null
+    $null = Invoke-Schtasks @("/Run", "/TN", $taskName)
 } else {
     Write-Log "starting as a detached process"
     $javaArgs = @("-jar", $jar, "--server.port=$Port")
