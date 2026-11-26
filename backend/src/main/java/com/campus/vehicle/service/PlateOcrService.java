@@ -13,15 +13,26 @@ import com.tencentcloudapi.ocr.v20181119.models.LicensePlateOCRRequest;
 import com.tencentcloudapi.ocr.v20181119.models.LicensePlateOCRResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * 车牌识别：腾讯云 OCR LicensePlateOCR。
@@ -45,7 +56,14 @@ public class PlateOcrService {
     @Value("${campus.ocr.endpoint:ocr.tencentcloudapi.com}")
     private String endpoint;
 
-    /** 仅用于联调：配置后跳过云 OCR，直接返回这个车牌 */
+    /** tencent / local */
+    @Value("${campus.ocr.provider:tencent}")
+    private String provider;
+
+    @Value("${campus.ocr.local-url:http://127.0.0.1:8715}")
+    private String localUrl;
+
+    /** 仅用于联调：配置后跳过 OCR，直接返回这个车牌 */
     @Value("${campus.ocr.mock-plate:}")
     private String mockPlate;
 
@@ -74,6 +92,14 @@ public class PlateOcrService {
                 throw new BizException("模拟车牌格式不正确：" + mockPlate);
             }
             return new PlateOcrResult(plate, 100L, "模拟", "mock");
+        }
+
+        String activeProvider = StringUtils.hasText(provider) ? provider.trim().toLowerCase(Locale.ROOT) : "tencent";
+        if ("local".equals(activeProvider)) {
+            return recognizeLocal(file);
+        }
+        if (!"tencent".equals(activeProvider)) {
+            throw new BizException(500, "未知 OCR provider：" + provider);
         }
 
         if (!StringUtils.hasText(secretId) || !StringUtils.hasText(secretKey)) {
@@ -120,6 +146,83 @@ public class PlateOcrService {
         } catch (TencentCloudSDKException e) {
             log.warn("腾讯云车牌识别失败: {}", e.getMessage());
             throw new BizException(502, "车牌识别服务暂时不可用：" + e.getMessage());
+        } catch (IOException e) {
+            throw new BizException("读取图片失败，请重试");
+        }
+    }
+
+    /**
+     * 调用服务器本机的 HyperLPR3 FastAPI 服务（127.0.0.1:8715）。
+     * 服务由 CampusPlateOcr 计划任务启动，不对外暴露端口。
+     */
+    private PlateOcrResult recognizeLocal(MultipartFile file) {
+        try {
+            ByteArrayResource resource = new ByteArrayResource(file.getBytes()) {
+                @Override
+                public String getFilename() {
+                    return "plate.jpg";
+                }
+            };
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", resource);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+            HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
+
+            SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(3000);
+            factory.setReadTimeout(20000);
+            RestTemplate restTemplate = new RestTemplate(factory);
+
+            String baseUrl = localUrl.endsWith("/")
+                    ? localUrl.substring(0, localUrl.length() - 1)
+                    : localUrl;
+            Map<?, ?> response = restTemplate.postForObject(baseUrl + "/api/v1/rec", request, Map.class);
+            if (response == null || !Boolean.TRUE.equals(response.get("ok"))) {
+                throw new BizException("本地车牌识别返回异常");
+            }
+
+            Object listObject = response.get("plate_list");
+            if (!(listObject instanceof List)) {
+                throw new BizException("未识别到车牌，请靠近车牌、保持水平后重拍");
+            }
+            List<?> plates = (List<?>) listObject;
+            if (plates.isEmpty()) {
+                throw new BizException("未识别到车牌，请靠近车牌、保持水平后重拍");
+            }
+
+            Map<?, ?> best = null;
+            double bestConfidence = -1;
+            for (Object item : plates) {
+                if (!(item instanceof Map)) {
+                    continue;
+                }
+                Map<?, ?> plate = (Map<?, ?>) item;
+                double confidence = plate.get("conf") instanceof Number
+                        ? ((Number) plate.get("conf")).doubleValue() : 0;
+                if (confidence > bestConfidence) {
+                    bestConfidence = confidence;
+                    best = plate;
+                }
+            }
+            if (best == null) {
+                throw new BizException("未识别到车牌，请调整角度后重拍");
+            }
+
+            String raw = best.get("code") == null ? "" : String.valueOf(best.get("code"));
+            String plate = PlateUtil.normalize(raw);
+            if (!PlateUtil.isValid(plate)) {
+                throw new BizException("识别结果不是有效车牌：" + raw);
+            }
+            long confidence = bestConfidence <= 1.0
+                    ? Math.round(bestConfidence * 100)
+                    : Math.round(bestConfidence);
+            String color = best.get("plate_type") == null ? null : String.valueOf(best.get("plate_type"));
+            return new PlateOcrResult(plate, confidence, color, "local");
+        } catch (RestClientException e) {
+            log.warn("本地 OCR 调用失败: {}", e.getMessage());
+            throw new BizException(502, "本地车牌识别服务不可用，请确认 OCR 服务已启动");
         } catch (IOException e) {
             throw new BizException("读取图片失败，请重试");
         }

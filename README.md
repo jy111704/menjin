@@ -153,7 +153,7 @@ java -jar target/campus-vehicle.jar --server.port=8080
 - 手机门岗 <http://192.144.235.177:8088/mobile-gate.html>
 - 手机门岗 HTTPS <https://192.144.235.177:8443/mobile-gate.html>（自签证书，首次打开需手动信任；HTTPS 下可实时预览摄像头）
 
-> 手机门岗用门卫或管理员账号登录，拍照识别车牌后可人工修正，再核验入场/离场。OCR 需在服务器 `config.env` 配置腾讯云密钥；未配置时仍可手动输入车牌。
+> 手机门岗用门卫或管理员账号登录，拍照识别车牌后可人工修正，再核验入场/离场。默认使用服务器本地 HyperLPR3（`CampusPlateOcr` 计划任务，`127.0.0.1:8715`），不需要云密钥；也可以在 `config.env` 设置 `CAMPUS_OCR_PROVIDER=tencent` 切回腾讯云 OCR。
 
 ---
 

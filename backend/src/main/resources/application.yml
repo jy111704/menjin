@@ -49,6 +49,8 @@ campus:
   qr:
     secret: "campus-pass-qrcode-signature-key-2026"
   ocr:
+    provider: ${CAMPUS_OCR_PROVIDER:tencent}
+    local-url: ${CAMPUS_OCR_LOCAL_URL:http://127.0.0.1:8715}
     secret-id: ${TENCENT_OCR_SECRET_ID:}
     secret-key: ${TENCENT_OCR_SECRET_KEY:}
     region: ${TENCENT_OCR_REGION:ap-guangzhou}
