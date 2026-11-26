@@ -24,6 +24,7 @@
         <jjwt.version>0.12.5</jjwt.version>
         <zxing.version>3.5.3</zxing.version>
         <poi.version>5.2.5</poi.version>
+        <tencentcloud.ocr.version>3.2.63</tencentcloud.ocr.version>
     </properties>
 
     <dependencies>
@@ -100,6 +101,13 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
             <version>${poi.version}</version>
+        </dependency>
+
+        <!-- 腾讯云 OCR：手机门岗车牌识别 -->
+        <dependency>
+            <groupId>com.tencentcloudapi</groupId>
+            <artifactId>tencentcloud-sdk-java-ocr</artifactId>
+            <version>${tencentcloud.ocr.version}</version>
         </dependency>
 
         <dependency>

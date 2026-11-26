@@ -180,14 +180,24 @@ if (Test-Path `$envFile) {
 "@
 Set-Content -Path $startPs1 -Value $startContent -Encoding UTF8
 
-# Open the application port for external access.
-try {
-    if (-not (Get-NetFirewallRule -DisplayName "CampusVehicle $Port" -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule -DisplayName "CampusVehicle $Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow | Out-Null
-        Write-Log "firewall rule created for port $Port"
+# Open the application ports for external access.
+$firewallPorts = @($Port)
+if ($env:CAMPUS_HTTPS_ENABLED -eq "true" -and $env:CAMPUS_HTTPS_PORT) {
+    try {
+        $firewallPorts += [int]$env:CAMPUS_HTTPS_PORT
+    } catch {
+        Write-Log "invalid CAMPUS_HTTPS_PORT: $($env:CAMPUS_HTTPS_PORT)"
     }
-} catch {
-    Write-Log "firewall rule skipped: $($_.Exception.Message)"
+}
+foreach ($fp in ($firewallPorts | Select-Object -Unique)) {
+    try {
+        if (-not (Get-NetFirewallRule -DisplayName "CampusVehicle $fp" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -DisplayName "CampusVehicle $fp" -Direction Inbound -Protocol TCP -LocalPort $fp -Action Allow | Out-Null
+            Write-Log "firewall rule created for port $fp"
+        }
+    } catch {
+        Write-Log "firewall rule skipped for port $fp : $($_.Exception.Message)"
+    }
 }
 
 # Prefer a scheduled task so the backend survives SSH disconnect and reboot.
@@ -237,3 +247,24 @@ if (-not $healthy) {
 }
 
 Write-Log "deploy ok: http://127.0.0.1:$Port/api/health"
+
+if ($env:CAMPUS_HTTPS_ENABLED -eq "true" -and $env:CAMPUS_HTTPS_PORT) {
+    $httpsPort = [int]$env:CAMPUS_HTTPS_PORT
+    $httpsHealthy = $false
+    for ($i = 0; $i -lt 30; $i++) {
+        $code = & curl.exe -k -sS -o NUL -w "%{http_code}" --max-time 3 "https://127.0.0.1:$httpsPort/api/health"
+        if ("$code".Trim() -eq "200") {
+            $httpsHealthy = $true
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $httpsHealthy) {
+        Write-Log "HTTPS health check failed on port $httpsPort"
+        if (Test-Path $stderr) {
+            Get-Content $stderr -Tail 80
+        }
+        exit 1
+    }
+    Write-Log "https ok: https://127.0.0.1:$httpsPort/api/health"
+}
