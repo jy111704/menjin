@@ -10,12 +10,14 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
-    name: Build jar
+    name: Build and release
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,27 +39,25 @@ jobs:
           mvn -B -DskipTests clean package
           ls -lh target/campus-vehicle.jar
 
-      - name: Upload jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: campus-vehicle-jar
-          path: backend/target/campus-vehicle.jar
-          if-no-files-found: error
+      - name: Publish release asset
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="build-${GITHUB_RUN_ID}"
+          gh release create "$TAG" backend/target/campus-vehicle.jar \
+            --title "Build ${GITHUB_SHA::7}" \
+            --notes "Automated build from ${GITHUB_SHA}" \
+            --latest
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
   deploy:
     name: Deploy
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download jar
-        uses: actions/download-artifact@v4
-        with:
-          name: campus-vehicle-jar
-
       - name: Prepare SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -70,39 +70,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: Ensure remote directory
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH' | Out-Null\""
-
-      - name: Upload jar and deploy script
-        timeout-minutes: 8
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          scp -O -i ~/.ssh/deploy_key -P "$SSH_PORT" campus-vehicle.jar \
-            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/campus-vehicle.jar.new"
-          scp -O -i ~/.ssh/deploy_key -P "$SSH_PORT" deploy/windows-deploy.ps1 \
-            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/windows-deploy.ps1"
-
-      - name: Restart and health check
+      - name: Download and restart on server
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           APP_PORT: ${{ secrets.APP_PORT }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "powershell -NoProfile -ExecutionPolicy Bypass -File $DEPLOY_PATH/windows-deploy.ps1 -AppDir $DEPLOY_PATH -Port $APP_PORT"
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH' | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/jy111704/menjin/$GITHUB_SHA/deploy/windows-deploy.ps1' -OutFile '$DEPLOY_PATH/windows-deploy.ps1'; & '$DEPLOY_PATH/windows-deploy.ps1' -AppDir '$DEPLOY_PATH' -Port $APP_PORT -ReleaseTag '$RELEASE_TAG'\""

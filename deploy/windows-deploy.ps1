@@ -1,6 +1,7 @@
 param(
     [string]$AppDir = "C:\campus-vehicle",
-    [int]$Port = 8080
+    [int]$Port = 80888,
+    [string]$ReleaseTag = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,31 @@ function Write-Log([string]$Message) {
 
 New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $AppDir "logs") | Out-Null
+
+if ($ReleaseTag) {
+    $repo = "jy111704/menjin"
+    $releaseUri = "https://api.github.com/repos/$repo/releases/tags/$ReleaseTag"
+    $apiHeaders = @{
+        "User-Agent" = "campus-vehicle-deploy"
+        "Accept"     = "application/vnd.github+json"
+    }
+    Write-Log "fetching release $ReleaseTag"
+    $release = Invoke-RestMethod -Uri $releaseUri -Headers $apiHeaders -TimeoutSec 60
+    $asset = @($release.assets | Where-Object { $_.name -eq "campus-vehicle.jar" })[0]
+    if (-not $asset) {
+        throw "release asset campus-vehicle.jar not found in $ReleaseTag"
+    }
+
+    Write-Log "downloading $($asset.name) ($($asset.size) bytes)"
+    $downloadHeaders = @{
+        "User-Agent" = "campus-vehicle-deploy"
+        "Accept"     = "application/octet-stream"
+    }
+    Invoke-WebRequest -UseBasicParsing `
+        -Uri "https://api.github.com/repos/$repo/releases/assets/$($asset.id)" `
+        -Headers $downloadHeaders -OutFile $newJar -TimeoutSec 900
+    Write-Log "downloaded to $newJar"
+}
 
 if (-not (Test-Path $newJar)) {
     throw "new jar not found: $newJar"
