@@ -1,0 +1,103 @@
+name: Deploy to Windows Server
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: campus-vehicle-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build jar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build single jar with frontend
+        run: |
+          set -euo pipefail
+          rm -rf backend/src/main/resources/static
+          mkdir -p backend/src/main/resources/static
+          cp -a frontend/dist/. backend/src/main/resources/static/
+          cd backend
+          mvn -B -DskipTests clean package
+          ls -lh target/campus-vehicle.jar
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: campus-vehicle-jar
+          path: backend/target/campus-vehicle.jar
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download jar
+        uses: actions/download-artifact@v4
+        with:
+          name: campus-vehicle-jar
+
+      - name: Prepare SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Ensure remote directory
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$DEPLOY_PATH' | Out-Null\""
+
+      - name: Upload jar and deploy script
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" campus-vehicle.jar \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/campus-vehicle.jar.new"
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" deploy/windows-deploy.ps1 \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/windows-deploy.ps1"
+
+      - name: Restart and health check
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "powershell -NoProfile -ExecutionPolicy Bypass -File '$DEPLOY_PATH/windows-deploy.ps1' -AppDir '$DEPLOY_PATH' -Port $APP_PORT"
