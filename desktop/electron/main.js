@@ -8,6 +8,8 @@ const { startServer, checkBackend } = require('./server')
 
 const APP_TITLE = '校园车辆出入登记管理系统'
 const DEFAULT_SERVER = 'http://192.144.235.177:8088'
+const CONFIG_VERSION = 2
+const LEGACY_DEFAULT_SERVERS = new Set(['http://127.0.0.1:8080', 'http://localhost:8080'])
 const isSelftest = process.argv.includes('--selftest')
 
 let mainWindow = null
@@ -23,14 +25,25 @@ function readConfig() {
     cfg = {}
   }
   const argServer = (process.argv.find((a) => a.startsWith('--server=')) || '').split('=')[1]
-  const server = (argServer || process.env.CAMPUS_SERVER || cfg.server || DEFAULT_SERVER).trim().replace(/\/+$/, '')
-  // 首次运行落盘一份配置，方便用户自行修改后端地址
-  try {
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, JSON.stringify({ server }, null, 2), 'utf8')
+  const explicitServer = (argServer || process.env.CAMPUS_SERVER || '').trim()
+  const savedServer = (cfg.server || '').trim().replace(/\/+$/, '')
+  const savedIsLegacy = LEGACY_DEFAULT_SERVERS.has(savedServer.toLowerCase())
+  // 旧版本会把默认值 127.0.0.1:8080 写进 config.json，导致升级后仍连本机。
+  // 没有 configVersion 的旧配置自动迁移到服务器地址；用户手动改过的地址保留。
+  const needsMigration = !savedServer || (savedIsLegacy && cfg.configVersion !== CONFIG_VERSION)
+  const server = (explicitServer || (needsMigration ? DEFAULT_SERVER : savedServer))
+    .trim()
+    .replace(/\/+$/, '')
+
+  // 首次运行或旧配置迁移时落盘；命令行/环境变量临时覆盖不写盘。
+  if (!explicitServer) {
+    try {
+      if (!fs.existsSync(file) || cfg.configVersion !== CONFIG_VERSION || cfg.server !== server) {
+        fs.writeFileSync(file, JSON.stringify({ configVersion: CONFIG_VERSION, server }, null, 2), 'utf8')
+      }
+    } catch (e) {
+      /* 忽略只读目录 */
     }
-  } catch (e) {
-    /* 忽略只读目录 */
   }
   return { server, file }
 }

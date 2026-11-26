@@ -45,6 +45,11 @@
   改完重启客户端即可。也可以用命令行临时指定：
       CampusVehicle.exe --server=http://127.0.0.1:8080
 
+  如果之前装过旧版、界面仍显示 127.0.0.1:8080：
+  新版会自动把旧配置迁移到服务器地址；若仍不生效，删除
+      C:\Users\你的用户名\AppData\Roaming\campus-vehicle-desktop\config.json
+  后重新打开客户端即可。
+
 
 四、几个细节
 
