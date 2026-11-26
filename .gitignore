@@ -7,9 +7,7 @@ backend/target/
 backend/src/main/resources/static/
 desktop/app-dist/
 desktop/release/
-desktop/dist-win/
-desktop/dist-win2/
-desktop/dist-win3/
+desktop/dist-win*/
 desktop/dist-dbg/
 desktop/.build-tmp/
 desktop/build-debug.log
