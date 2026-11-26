@@ -5,11 +5,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $taskName = "CampusVehicle"
-$jar = Join-Path $AppDir "campus-vehicle.jar"
-$newJar = Join-Path $AppDir "campus-vehicle.jar.new"
-$stdout = Join-Path $AppDir "backend.out.log"
-$stderr = Join-Path $AppDir "backend.err.log"
-$startPs1 = Join-Path $AppDir "start-campus.ps1"
+$AppDir = [System.IO.Path]::GetFullPath($AppDir)
+$jar = [System.IO.Path]::GetFullPath((Join-Path $AppDir "campus-vehicle.jar"))
+$newJar = [System.IO.Path]::GetFullPath((Join-Path $AppDir "campus-vehicle.jar.new"))
+$stdout = [System.IO.Path]::GetFullPath((Join-Path $AppDir "backend.out.log"))
+$stderr = [System.IO.Path]::GetFullPath((Join-Path $AppDir "backend.err.log"))
+$startPs1 = [System.IO.Path]::GetFullPath((Join-Path $AppDir "start-campus.ps1"))
 
 function Write-Log([string]$Message) {
     Write-Output ("[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message)

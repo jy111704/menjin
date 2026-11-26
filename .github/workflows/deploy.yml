@@ -100,4 +100,4 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "powershell -NoProfile -ExecutionPolicy Bypass -File '$DEPLOY_PATH/windows-deploy.ps1' -AppDir '$DEPLOY_PATH' -Port $APP_PORT"
+            "powershell -NoProfile -ExecutionPolicy Bypass -File $DEPLOY_PATH/windows-deploy.ps1 -AppDir $DEPLOY_PATH -Port $APP_PORT"

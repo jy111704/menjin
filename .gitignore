@@ -17,6 +17,10 @@ desktop/build-debug.log
 # 桌面客户端二进制（需要时运行 打包桌面客户端.bat 重新生成）
 桌面客户端/*.exe
 
+# 部署时的真实配置（含密码，不入库）
+deploy/config.env
+.env
+
 # 本地数据、日志与 IDE 配置
 .workbuddy/
 logs/
