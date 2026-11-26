@@ -37,6 +37,9 @@ public class DataInitializer implements ApplicationRunner {
     @Value("${campus.admin.phone}")
     private String adminPhone;
 
+    @Value("${server.port:8080}")
+    private int serverPort;
+
     @Override
     public void run(ApplicationArguments args) {
         configService.reload();
@@ -55,6 +58,6 @@ public class DataInitializer implements ApplicationRunner {
             userMapper.insert(admin);
             log.info("已创建初始管理员账号：{} / {}（请登录后立即修改密码）", adminUsername, adminPassword);
         }
-        log.info("校园车辆出入登记管理系统启动完成，接口地址 http://localhost:8080/api");
+        log.info("校园车辆出入登记管理系统启动完成，服务端口 {}，健康检查 /api/health", serverPort);
     }
 }

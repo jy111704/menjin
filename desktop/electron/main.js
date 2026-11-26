@@ -7,7 +7,7 @@ const os = require('os')
 const { startServer, checkBackend } = require('./server')
 
 const APP_TITLE = '校园车辆出入登记管理系统'
-const DEFAULT_SERVER = 'http://127.0.0.1:8080'
+const DEFAULT_SERVER = 'http://192.144.235.177:8088'
 const isSelftest = process.argv.includes('--selftest')
 
 let mainWindow = null
