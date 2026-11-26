@@ -98,6 +98,21 @@
       pointer-events: none;
     }
     .shot { width: 100%; max-height: 48vh; object-fit: contain; margin-top: 12px; border-radius: 14px; background: #0f172a; }
+    .auto-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      font-size: 12px;
+    }
+    .switch { display: flex; align-items: center; gap: 7px; color: #334155; font-weight: 600; }
+    .switch input { width: 17px; height: 17px; accent-color: #1d4ed8; }
+    .auto-status { display: flex; align-items: center; gap: 6px; color: #64748b; white-space: nowrap; }
+    .auto-status .dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+    .auto-status.ok .dot { background: #22c55e; }
+    .auto-status.warn .dot { background: #f59e0b; }
+    .auto-status.error .dot { background: #ef4444; }
     .camera-actions { display: grid; gap: 8px; margin-top: 12px; }
     .camera-actions button { margin-top: 0; }
     .plate-label { margin-top: 2px; }
@@ -180,9 +195,14 @@
         <div class="scan-frame"></div>
       </div>
       <img id="shot" class="shot" alt="待识别车牌照片" hidden>
+      <div class="auto-bar">
+        <label class="switch"><input id="autoVerify" type="checkbox" checked><span>识别后自动核验</span></label>
+        <span id="autoStatus" class="auto-status"><span class="dot"></span><span id="autoStatusText">等待开启</span></span>
+      </div>
       <div class="camera-actions">
-        <button id="liveBtn" class="primary" hidden>开启实时预览</button>
-        <button id="captureLiveBtn" class="primary" hidden>抓拍识别</button>
+        <button id="startAutoBtn" class="primary" hidden>开始自动扫描</button>
+        <button id="pauseAutoBtn" class="ghost" hidden>暂停自动扫描</button>
+        <button id="captureLiveBtn" class="ghost" hidden>手动抓拍</button>
         <button id="photoBtn" class="primary">拍照识别</button>
       </div>
       <input id="fileInput" type="file" accept="image/*" capture="environment" hidden>
@@ -221,12 +241,29 @@
   var shotUrl = null;
   var audioCtx = null;
 
+  var autoTimer = null;
+  var autoRunning = false;
+  var scanBusy = false;
+  var lastPlate = '';
+  var emptyStreak = 0;
+  var holdUntil = 0;
+  var autoStartTried = false;
+
+  var SCAN_INTERVAL_MS = 1200;
+  var RESULT_HOLD_MS = 6000;
+  var AUTO_CONFIDENCE = 75;
+
   function $(id) { return document.getElementById(id); }
 
   function setMsg(id, text, type) {
     var el = $(id);
     el.textContent = text || '';
     el.className = 'msg' + (type ? ' ' + type : '');
+  }
+
+  function setAutoStatus(text, type) {
+    $('autoStatusText').textContent = text || '';
+    $('autoStatus').className = 'auto-status' + (type ? ' ' + type : '');
   }
 
   function normalizePlate(value) {
@@ -306,6 +343,7 @@
       setMsg('loginMsg', '', '');
       showApp();
       await loadGates();
+      maybeAutoStart();
     } catch (e) {
       setMsg('loginMsg', e.message, 'error');
     } finally {
@@ -344,21 +382,31 @@
   function updateCameraMode() {
     var secure = secureCameraSupported();
     var badge = $('secureBadge');
-    badge.textContent = secure ? 'HTTPS 实时模式' : 'HTTP 拍照模式';
+    badge.textContent = secure ? 'HTTPS 自动模式' : 'HTTP 拍照模式';
     badge.className = 'badge ' + (secure ? 'ok' : 'warn');
-    $('liveBtn').hidden = !secure;
+    $('startAutoBtn').hidden = !secure;
     $('photoBtn').hidden = false;
     $('cameraHint').textContent = secure
-      ? '可开启实时预览，对准车牌后抓拍。'
-      : '当前是 HTTP，点击“拍照识别”会调系统相机；要实时预览请用 HTTPS。';
+      ? '点一次“开始自动扫描”，之后对准车牌即可自动识别、自动核验。'
+      : '当前是 HTTP，无法自动扫描；请用“拍照识别”，自动模式需要 HTTPS。';
+    if (!secure) {
+      setAutoStatus('需要 HTTPS', 'warn');
+    } else if (!autoRunning) {
+      setAutoStatus('等待开启', '');
+    }
   }
 
   async function startCamera() {
     if (!secureCameraSupported()) {
-      setMsg('ocrMsg', '当前不是 HTTPS，无法实时预览；请直接用“拍照识别”。', 'error');
-      return;
+      setMsg('ocrMsg', '当前不是 HTTPS，无法自动扫描；请直接用“拍照识别”。', 'error');
+      return false;
     }
-    $('liveBtn').disabled = true;
+    if (stream) {
+      $('videoWrap').hidden = false;
+      $('shot').hidden = true;
+      return true;
+    }
+    $('startAutoBtn').disabled = true;
     setMsg('ocrMsg', '正在打开摄像头…', '');
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -368,19 +416,61 @@
       $('video').srcObject = stream;
       $('videoWrap').hidden = false;
       $('shot').hidden = true;
-      $('liveBtn').hidden = true;
+      $('startAutoBtn').hidden = true;
       $('captureLiveBtn').hidden = false;
       await $('video').play();
-      setMsg('ocrMsg', '对准车牌后点“抓拍识别”', '');
+      setMsg('ocrMsg', '摄像头已打开', '');
+      return true;
     } catch (e) {
       setMsg('ocrMsg', '摄像头打开失败：' + e.message + '；可改用“拍照识别”。', 'error');
-      $('liveBtn').hidden = false;
+      $('startAutoBtn').hidden = false;
+      setAutoStatus('摄像头未开启', 'error');
+      return false;
     } finally {
-      $('liveBtn').disabled = false;
+      $('startAutoBtn').disabled = false;
     }
   }
 
+  function pauseAuto(reason) {
+    autoRunning = false;
+    if (autoTimer) {
+      clearTimeout(autoTimer);
+      autoTimer = null;
+    }
+    $('pauseAutoBtn').hidden = true;
+    $('startAutoBtn').hidden = !secureCameraSupported();
+    setAutoStatus(reason || '已暂停', 'warn');
+  }
+
+  async function startAuto() {
+    if (autoRunning) {
+      return;
+    }
+    if (!secureCameraSupported()) {
+      setMsg('ocrMsg', '自动扫描需要 HTTPS，请用 https:// 地址打开。', 'error');
+      return;
+    }
+    var opened = await startCamera();
+    if (!opened) {
+      return;
+    }
+    autoRunning = true;
+    emptyStreak = 0;
+    holdUntil = 0;
+    $('startAutoBtn').hidden = true;
+    $('pauseAutoBtn').hidden = false;
+    $('captureLiveBtn').hidden = false;
+    setAutoStatus('自动扫描中', 'ok');
+    setMsg('ocrMsg', '自动扫描已开启，识别到车牌会自动核验', '');
+    scheduleAuto(500);
+  }
+
   function stopCamera() {
+    autoRunning = false;
+    if (autoTimer) {
+      clearTimeout(autoTimer);
+      autoTimer = null;
+    }
     if (stream) {
       stream.getTracks().forEach(function (track) { track.stop(); });
       stream = null;
@@ -388,7 +478,134 @@
     $('video').srcObject = null;
     $('videoWrap').hidden = true;
     $('captureLiveBtn').hidden = true;
-    $('liveBtn').hidden = !secureCameraSupported();
+    $('pauseAutoBtn').hidden = true;
+    $('startAutoBtn').hidden = !secureCameraSupported();
+    setAutoStatus(secureCameraSupported() ? '已停止' : '需要 HTTPS', 'warn');
+  }
+
+  function scheduleAuto(delay) {
+    if (!autoRunning) {
+      return;
+    }
+    if (autoTimer) {
+      clearTimeout(autoTimer);
+    }
+    autoTimer = setTimeout(autoScanOnce, delay || SCAN_INTERVAL_MS);
+  }
+
+  function handleEmptyFrame() {
+    emptyStreak += 1;
+    if (emptyStreak >= 5) {
+      lastPlate = '';
+    }
+    setAutoStatus('未识别到车牌，继续扫描…', '');
+  }
+
+  function isNoPlateError(error) {
+    var message = (error && error.message) || '';
+    return message.indexOf('未识别') >= 0
+      || message.indexOf('不是有效车牌') >= 0
+      || message.indexOf('车牌格式') >= 0;
+  }
+
+  function captureFrame(maxSide, quality) {
+    return new Promise(function (resolve, reject) {
+      var video = $('video');
+      if (!video.videoWidth || !video.videoHeight) {
+        reject(new Error('摄像头还没准备好'));
+        return;
+      }
+      var width = video.videoWidth;
+      var height = video.videoHeight;
+      if (Math.max(width, height) > maxSide) {
+        var scale = maxSide / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      var canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(video, 0, 0, width, height);
+      canvas.toBlob(function (blob) {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('抓拍失败'));
+        }
+      }, 'image/jpeg', quality);
+    });
+  }
+
+  async function requestOcr(blob) {
+    var form = new FormData();
+    form.append('file', blob, 'plate.jpg');
+    return await api('/ocr/plate', { method: 'POST', body: form });
+  }
+
+  async function autoScanOnce() {
+    if (!autoRunning || scanBusy) {
+      return;
+    }
+    if (!stream) {
+      pauseAuto('摄像头未开启');
+      return;
+    }
+    if (Date.now() < holdUntil) {
+      scheduleAuto(Math.min(1000, holdUntil - Date.now() + 100));
+      return;
+    }
+    if (!$('resultCard').hidden) {
+      nextVehicle();
+      return;
+    }
+
+    scanBusy = true;
+    setAutoStatus('扫描中…', '');
+    try {
+      var blob = await captureFrame(1280, 0.85);
+      var data = await requestOcr(blob);
+      var plate = normalizePlate(data.plateNo);
+      var confidence = Number(data.confidence) || 0;
+
+      if (!plate) {
+        handleEmptyFrame();
+        return;
+      }
+      if (plate === lastPlate) {
+        emptyStreak = 0;
+        setAutoStatus('同一车辆已处理，等待离开…', 'warn');
+        return;
+      }
+      if ($('autoVerify').checked && confidence >= AUTO_CONFIDENCE) {
+        lastPlate = plate;
+        emptyStreak = 0;
+        $('plateInput').value = plate;
+        setAutoStatus('识别到 ' + plate + '，自动核验中…', 'ok');
+        var result = await verifyPlate(plate);
+        holdUntil = Date.now() + RESULT_HOLD_MS;
+        setAutoStatus(result.pass ? '放行：' + plate : '拦截：' + plate, result.pass ? 'ok' : 'error');
+      } else {
+        $('plateInput').value = plate;
+        pauseAuto('识别到 ' + plate + '（置信度 ' + confidence + '），请确认');
+        setMsg('ocrMsg', '置信度较低，自动扫描已暂停；请确认车牌后点“确认核验”', 'error');
+      }
+    } catch (e) {
+      if (isNoPlateError(e)) {
+        handleEmptyFrame();
+      } else {
+        pauseAuto(e.message || '识别失败');
+        setMsg('ocrMsg', (e.message || '识别失败') + '；可手动输入车牌', 'error');
+      }
+    } finally {
+      scanBusy = false;
+      if (autoRunning) {
+        var delay = SCAN_INTERVAL_MS;
+        if (holdUntil > Date.now()) {
+          delay = Math.max(500, Math.min(1500, holdUntil - Date.now() + 200));
+        }
+        scheduleAuto(delay);
+      }
+    }
   }
 
   function loadImage(blob) {
@@ -440,9 +657,7 @@
     $('captureLiveBtn').disabled = true;
     setMsg('ocrMsg', '识别中，请稍候…', '');
     try {
-      var form = new FormData();
-      form.append('file', blob, 'plate.jpg');
-      var data = await api('/ocr/plate', { method: 'POST', body: form });
+      var data = await requestOcr(blob);
       $('plateInput').value = data.plateNo || '';
       setMsg('ocrMsg', '识别成功：' + data.plateNo + '（置信度 ' + data.confidence + '）', 'ok');
       if (navigator.vibrate) navigator.vibrate(50);
@@ -544,6 +759,16 @@
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  async function verifyPlate(plate) {
+    var gateId = $('gateSelect').value ? Number($('gateSelect').value) : null;
+    var result = await api('/verify', {
+      method: 'POST',
+      body: { plateNo: plate, gateId: gateId }
+    });
+    showResult(result);
+    return result;
+  }
+
   async function verify() {
     var plate = normalizePlate($('plateInput').value);
     $('plateInput').value = plate;
@@ -551,16 +776,14 @@
       setMsg('verifyMsg', '请先拍照识别或手动输入车牌', 'error');
       return;
     }
-    var gateId = $('gateSelect').value ? Number($('gateSelect').value) : null;
+    if (autoRunning) {
+      pauseAuto('手动核验，自动扫描已暂停');
+    }
     $('verifyBtn').disabled = true;
     setMsg('verifyMsg', '核验中…', '');
     try {
-      var result = await api('/verify', {
-        method: 'POST',
-        body: { plateNo: plate, gateId: gateId }
-      });
+      await verifyPlate(plate);
       setMsg('verifyMsg', '', '');
-      showResult(result);
     } catch (e) {
       setMsg('verifyMsg', e.message, 'error');
       $('resultCard').hidden = true;
@@ -583,12 +806,30 @@
     setMsg('verifyMsg', '', '');
     if (stream) {
       $('videoWrap').hidden = false;
-      $('liveBtn').hidden = true;
+      $('startAutoBtn').hidden = true;
       $('captureLiveBtn').hidden = false;
+      $('videoWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
-      $('liveBtn').hidden = !secureCameraSupported();
+      $('startAutoBtn').hidden = !secureCameraSupported();
     }
-    $('plateInput').focus();
+    if (autoRunning) {
+      setAutoStatus('自动扫描中', 'ok');
+      scheduleAuto(600);
+    } else {
+      $('plateInput').focus();
+    }
+  }
+
+  function maybeAutoStart() {
+    if (autoStartTried || !secureCameraSupported()) {
+      return;
+    }
+    autoStartTried = true;
+    setTimeout(function () {
+      if (!autoRunning) {
+        startAuto();
+      }
+    }, 600);
   }
 
   async function init() {
@@ -596,9 +837,20 @@
     $('password').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
     $('logoutBtn').addEventListener('click', logout);
     $('refreshGates').addEventListener('click', loadGates);
-    $('liveBtn').addEventListener('click', startCamera);
-    $('captureLiveBtn').addEventListener('click', captureLive);
-    $('photoBtn').addEventListener('click', function () { $('fileInput').click(); });
+    $('gateSelect').addEventListener('change', function () {
+      lastPlate = '';
+      emptyStreak = 0;
+    });
+    $('startAutoBtn').addEventListener('click', startAuto);
+    $('pauseAutoBtn').addEventListener('click', function () { pauseAuto('已暂停'); });
+    $('captureLiveBtn').addEventListener('click', function () {
+      if (autoRunning) pauseAuto('手动抓拍，自动扫描已暂停');
+      captureLive();
+    });
+    $('photoBtn').addEventListener('click', function () {
+      if (autoRunning) pauseAuto('手动拍照，自动扫描已暂停');
+      $('fileInput').click();
+    });
     $('fileInput').addEventListener('change', onFileChange);
     $('verifyBtn').addEventListener('click', verify);
     $('plateInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') verify(); });
@@ -614,6 +866,7 @@
       await api('/auth/me');
       showApp();
       await loadGates();
+      maybeAutoStart();
     } catch (e) {
       showLogin();
     }
