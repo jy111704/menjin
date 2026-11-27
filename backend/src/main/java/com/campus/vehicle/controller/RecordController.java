@@ -42,6 +42,14 @@ public class RecordController {
         return R.ok(recordService.onSite());
     }
 
+    /** 删除单条出入记录：仅管理员，删除动作写审计日志 */
+    @DeleteMapping("/{id}")
+    @RequireRole({"ADMIN"})
+    public R<Void> delete(@PathVariable Long id) {
+        recordService.delete(id);
+        return R.ok();
+    }
+
     @GetMapping("/export")
     public void export(@RequestParam(required = false) String keyword,
                        @RequestParam(required = false) String direction,

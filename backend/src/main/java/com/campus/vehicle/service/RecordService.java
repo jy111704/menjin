@@ -2,6 +2,7 @@ package com.campus.vehicle.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.vehicle.common.BizException;
 import com.campus.vehicle.common.PageResult;
 import com.campus.vehicle.entity.AccessRecord;
 import com.campus.vehicle.entity.PassCode;
@@ -12,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.io.OutputStream;
@@ -74,6 +76,17 @@ public class RecordService {
         Page<AccessRecord> page = recordMapper.selectPage(new Page<>(1, limit),
                 new LambdaQueryWrapper<AccessRecord>().orderByDesc(AccessRecord::getOccurTime));
         return page.getRecords();
+    }
+
+    @Transactional
+    public void delete(Long id) {
+        AccessRecord record = recordMapper.selectById(id);
+        if (record == null) {
+            throw new BizException("记录不存在或已被删除");
+        }
+        recordMapper.deleteById(id);
+        auditLogService.log("出入记录", "删除",
+                "删除记录 " + nvl(record.getRecordNo()) + "，车牌 " + nvl(record.getPlateNo()));
     }
 
     public void export(String keyword, String direction, String result, String passType, Long gateId,
