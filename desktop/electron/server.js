@@ -222,9 +222,8 @@ function serveStatic(req, res, root) {
   const headers = {
     'Content-Type': MIME[ext] || 'application/octet-stream',
     'Content-Length': stat.size,
-    'Cache-Control': /[\\/]assets[\\/]/.test(filePath) && /\.[0-9a-zA-Z_-]{8,}\./.test(path.basename(filePath))
-      ? 'public, max-age=31536000, immutable'
-      : 'no-cache'
+    // 本地客户端更新频繁，不能让 Chromium 把旧 JS 按 immutable 缓存一年。
+    'Cache-Control': 'no-cache'
   }
   res.writeHead(200, headers)
   if (req.method === 'HEAD') return res.end()
