@@ -50,6 +50,13 @@ public class RecordController {
         return R.ok();
     }
 
+    /** 批量删除选中的出入记录 */
+    @DeleteMapping("/batch")
+    @RequireRole({"ADMIN"})
+    public R<Integer> deleteBatch(@RequestBody List<Long> ids) {
+        return R.ok(recordService.deleteBatch(ids));
+    }
+
     @GetMapping("/export")
     public void export(@RequestParam(required = false) String keyword,
                        @RequestParam(required = false) String direction,

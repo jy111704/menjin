@@ -15,6 +15,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -56,6 +57,17 @@ public class AuditLogService {
         // 删除日志本身不再写入 audit_log，避免删一条又多一条；保留服务端文件日志。
         log.info("操作日志已删除 id={}, module={}, action={}, username={}",
                 id, entity.getModule(), entity.getAction(), entity.getUsername());
+    }
+
+    public int deleteBatch(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        int count = auditLogMapper.deleteBatchIds(ids);
+        if (count > 0) {
+            log.info("操作日志批量删除 {} 条", count);
+        }
+        return count;
     }
 
     public void log(String module, String action, String detail) {

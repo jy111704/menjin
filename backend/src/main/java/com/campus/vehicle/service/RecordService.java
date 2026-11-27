@@ -89,6 +89,18 @@ public class RecordService {
                 "删除记录 " + nvl(record.getRecordNo()) + "，车牌 " + nvl(record.getPlateNo()));
     }
 
+    @Transactional
+    public int deleteBatch(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        int count = recordMapper.deleteBatchIds(ids);
+        if (count > 0) {
+            auditLogService.log("出入记录", "批量删除", "删除 " + count + " 条记录");
+        }
+        return count;
+    }
+
     public void export(String keyword, String direction, String result, String passType, Long gateId,
                        LocalDate startDate, LocalDate endDate, HttpServletResponse response) throws Exception {
         LambdaQueryWrapper<AccessRecord> qw = buildQuery(keyword, direction, result, passType, gateId, startDate, endDate);

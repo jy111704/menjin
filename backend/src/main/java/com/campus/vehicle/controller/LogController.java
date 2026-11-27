@@ -10,11 +10,13 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/logs")
@@ -41,5 +43,11 @@ public class LogController {
     public R<Void> delete(@PathVariable Long id) {
         auditLogService.delete(id);
         return R.ok();
+    }
+
+    /** 批量删除选中的操作日志 */
+    @DeleteMapping("/batch")
+    public R<Integer> deleteBatch(@RequestBody List<Long> ids) {
+        return R.ok(auditLogService.deleteBatch(ids));
     }
 }
