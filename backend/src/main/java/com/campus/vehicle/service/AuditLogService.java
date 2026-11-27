@@ -2,6 +2,7 @@ package com.campus.vehicle.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.vehicle.common.BizException;
 import com.campus.vehicle.common.PageResult;
 import com.campus.vehicle.entity.AuditLog;
 import com.campus.vehicle.mapper.AuditLogMapper;
@@ -44,6 +45,17 @@ public class AuditLogService {
         qw.orderByDesc(AuditLog::getId);
         Page<AuditLog> result = auditLogMapper.selectPage(new Page<>(page, size), qw);
         return PageResult.of(result.getTotal(), page, size, result.getRecords());
+    }
+
+    public void delete(Long id) {
+        AuditLog entity = auditLogMapper.selectById(id);
+        if (entity == null) {
+            throw new BizException("操作日志不存在或已被删除");
+        }
+        auditLogMapper.deleteById(id);
+        // 删除日志本身不再写入 audit_log，避免删一条又多一条；保留服务端文件日志。
+        log.info("操作日志已删除 id={}, module={}, action={}, username={}",
+                id, entity.getModule(), entity.getAction(), entity.getUsername());
     }
 
     public void log(String module, String action, String detail) {
