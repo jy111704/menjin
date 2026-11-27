@@ -6,7 +6,6 @@ import com.campus.vehicle.common.BizException;
 import com.campus.vehicle.common.PageResult;
 import com.campus.vehicle.dto.VehicleRequest;
 import com.campus.vehicle.entity.Vehicle;
-import com.campus.vehicle.mapper.AccessRecordMapper;
 import com.campus.vehicle.mapper.VehicleMapper;
 import com.campus.vehicle.security.LoginUser;
 import com.campus.vehicle.security.UserContext;
@@ -25,7 +24,6 @@ import java.util.List;
 public class VehicleService {
 
     private final VehicleMapper vehicleMapper;
-    private final AccessRecordMapper recordMapper;
     private final AuditLogService auditLogService;
 
     public PageResult<Vehicle> page(int page, int size, String keyword, String status, String type) {
@@ -148,13 +146,9 @@ public class VehicleService {
         if (vehicle == null) {
             return;
         }
-        Long used = recordMapper.selectCount(new LambdaQueryWrapper<com.campus.vehicle.entity.AccessRecord>()
-                .eq(com.campus.vehicle.entity.AccessRecord::getPlateNo, vehicle.getPlateNo()));
-        if (used != null && used > 0) {
-            throw new BizException("该车辆已有出入记录，不能删除，可改为「停用」");
-        }
+        // 出入记录保留作为历史审计，不因车辆档案删除而级联删除。
         vehicleMapper.deleteById(id);
-        auditLogService.log("车辆档案", "删除", "车牌 " + vehicle.getPlateNo());
+        auditLogService.log("车辆档案", "删除", "车牌 " + vehicle.getPlateNo() + "（保留历史出入记录）");
     }
 
     private void fill(Vehicle vehicle, VehicleRequest req, String plate) {
